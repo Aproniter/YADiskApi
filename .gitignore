@@ -162,6 +162,5 @@ cython_debug/
 .idea/
 
 # Other Files
-*.md
 
 credentials.json
