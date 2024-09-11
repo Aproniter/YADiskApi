@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Приложение Яндекс.Диск</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Яндекс.Диск</h1>
+
+    <label for="fileTypeFilter">Фильтр по типу файла:</label>
+    <select id="fileTypeFilter">
+        <option value="all">Все</option>
+        <option value="documents">Документы</option>
+        <option value="images">Изображения</option>
+        <option value="videos">Видео</option>
+    </select><br><br>
+
+    <form id="linkForm">
+        <input type="text" id="publicKeyInput" name="public_key" placeholder="Введите публичную ссылку" required>
+        <button type="submit">Посмотреть файлы</button>
+    </form>
+    <ul id="fileList"></ul>
+    <button id="downloadSelectedBtn">Скачать выбранные файлы</button>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const savedKey = localStorage.getItem('public_key');
+            if (savedKey) {
+                document.getElementById('publicKeyInput').value = savedKey;
+            }
+            document.getElementById('fileTypeFilter').addEventListener('change', filterFiles);
+        });
+        const fileTypes = {
+            documents: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'],
+            images: ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg'],
+            videos: ['.mp4', '.avi', '.mov', '.mkv', '.wmv'],
+            audio: ['.mp3', '.wav', '.ogg', '.aac'],
+            archives: ['.zip', '.rar', '.tar', '.gz']
+        };
+
+        function filterFiles() {
+            const selectedType = document.getElementById('fileTypeFilter').value;
+            const files = document.querySelectorAll('.file');
+            
+            files.forEach(file => {
+                const fileName = file.dataset.name;
+                const fileExtension = fileName.split('.').pop().toLowerCase();
+                if (selectedType === 'all') {
+                    file.style.display = 'list-item';
+                } else {
+                    const validExtensions = fileTypes[selectedType] || [];
+                    file.style.display = validExtensions.includes(`.${fileExtension}`) ? 'list-item' : 'none';
+                }
+            });
+        }
+
+
+        function createTree(files) {
+            const fileList = document.getElementById('fileList');
+            const fileTree = {};
+
+            files.forEach(file => {
+                const parts = file.path.split('/');
+                let current = fileTree;
+
+                parts.forEach((part, index) => {
+                    if (!current[part]) {
+                        current[part] = (index === parts.length - 1) ? file : {};
+                    }
+                    current = current[part];
+                });
+            });
+
+            const buildList = (tree) => {
+                const ul = document.createElement('ul');
+                for (const key in tree) {
+                    const li = document.createElement('li');
+                    li.className = 'file';
+                    if (tree[key].download_url) {
+                        li.innerHTML = `
+                            <input type="checkbox" class="file-checkbox" data-url="${tree[key].download_url}" />
+                            ${tree[key].name} 
+                            <a href="/download/?file_path=${tree[key].download_url}">Скачать</a>
+                        `;
+                        li.dataset.name = tree[key].name;
+                    } else {
+                        li.textContent = key;
+                        li.className = 'folder';
+                        const children = buildList(tree[key]);
+                        li.appendChild(children);
+                    }
+                    ul.appendChild(li);
+                }
+                return ul;
+            };
+
+            fileList.appendChild(buildList(fileTree));
+        }
+
+        document.getElementById('linkForm').onsubmit = async function (event) {
+            event.preventDefault();
+            const formData = new FormData(this);
+
+            const publicKey = document.getElementById('publicKeyInput').value;
+            localStorage.setItem('public_key', publicKey);
+
+            const response = await fetch('/list_files', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+            if ('error' in result){
+                const error = document.createElement('h2');
+                error.innerHTML = 'ERROR - ' + result.error
+                fileList.appendChild(error);
+            } else {
+                createTree(result.files);
+            }
+            
+        };
+
+        document.getElementById('downloadSelectedBtn').addEventListener('click', () => {
+            const selectedFiles = Array.from(document.querySelectorAll('.file-checkbox:checked'))
+                .map(checkbox => checkbox.dataset.url);
+
+            if (selectedFiles.length === 0) {
+                alert("Пожалуйста, выберите хотя бы один файл для скачивания.");
+                return;
+            }
+            
+            fetch('/multiple-download', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ file_urls: selectedFiles }),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Ошибка: ' + response.statusText);
+                }
+                return response.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'downloaded_files.zip';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(error => {
+                console.error('Ошибка при загрузке файлов:', error);
+                alert("Произошла ошибка при загрузке файлов.");
+            });
+        });
+    </script>
+</body>
+</html>
